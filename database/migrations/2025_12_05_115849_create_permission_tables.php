@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -25,16 +26,29 @@ return new class extends Migration
                 // $table->engine('InnoDB');
                 $table->bigIncrements('id'); // permission id
                 $table->string('name', 191);       // For MyISAM use string('name', 225); // (or 166 for InnoDB with Redundant/Compact row format)
-                $table->string('guard_name', 191); // For MyISAM use string('guard_name', 25);
+                $table->string('guard_name', 50); // Reduced to 50 chars to avoid MySQL key length limit (191*4 + 50*4 = 964 bytes < 1000)
                 $table->timestamps();
 
                 $table->unique(['name', 'guard_name']);
             });
         } else {
-            // Fix existing table columns if needed
+            // Table exists - fix columns if needed
+            // Drop existing unique index if it exists
+            try {
+                DB::statement("ALTER TABLE `{$tableNames['permissions']}` DROP INDEX `permissions_name_guard_name_unique`");
+            } catch (\Exception $e) {
+                // Index doesn't exist, continue
+            }
+            
+            // Modify columns - name to 191, guard_name to 50 (to stay under MySQL 1000 byte key limit)
             Schema::table($tableNames['permissions'], function (Blueprint $table) {
                 $table->string('name', 191)->change();
-                $table->string('guard_name', 191)->change();
+                $table->string('guard_name', 50)->change();
+            });
+            
+            // Re-add unique index
+            Schema::table($tableNames['permissions'], function (Blueprint $table) {
+                $table->unique(['name', 'guard_name']);
             });
         }
 
@@ -47,7 +61,7 @@ return new class extends Migration
                     $table->index($columnNames['team_foreign_key'], 'roles_team_foreign_key_index');
                 }
                 $table->string('name', 191);       // For MyISAM use string('name', 225); // (or 166 for InnoDB with Redundant/Compact row format)
-                $table->string('guard_name', 191); // For MyISAM use string('guard_name', 25);
+                $table->string('guard_name', 50); // Reduced to 50 chars to avoid MySQL key length limit
                 $table->timestamps();
                 if ($teams || config('permission.testing')) {
                     $table->unique([$columnNames['team_foreign_key'], 'name', 'guard_name']);
@@ -56,10 +70,31 @@ return new class extends Migration
                 }
             });
         } else {
-            // Fix existing table columns if needed
+            // Table exists - fix columns if needed
+            // Drop existing unique index if it exists
+            $uniqueIndexName = ($teams || config('permission.testing')) 
+                ? 'roles_' . $columnNames['team_foreign_key'] . '_name_guard_name_unique'
+                : 'roles_name_guard_name_unique';
+            
+            try {
+                DB::statement("ALTER TABLE `{$tableNames['roles']}` DROP INDEX `{$uniqueIndexName}`");
+            } catch (\Exception $e) {
+                // Index doesn't exist, continue
+            }
+            
+            // Modify columns - name to 191, guard_name to 50 (to stay under MySQL 1000 byte key limit)
             Schema::table($tableNames['roles'], function (Blueprint $table) {
                 $table->string('name', 191)->change();
-                $table->string('guard_name', 191)->change();
+                $table->string('guard_name', 50)->change();
+            });
+            
+            // Re-add unique index
+            Schema::table($tableNames['roles'], function (Blueprint $table) use ($teams, $columnNames) {
+                if ($teams || config('permission.testing')) {
+                    $table->unique([$columnNames['team_foreign_key'], 'name', 'guard_name']);
+                } else {
+                    $table->unique(['name', 'guard_name']);
+                }
             });
         }
 
@@ -87,6 +122,11 @@ return new class extends Migration
             }
 
             });
+        } else {
+            // Table exists - fix model_type column if needed
+            Schema::table($tableNames['model_has_permissions'], function (Blueprint $table) {
+                $table->string('model_type', 191)->change();
+            });
         }
 
         if (!Schema::hasTable($tableNames['model_has_roles'])) {
@@ -111,6 +151,11 @@ return new class extends Migration
                 $table->primary([$pivotRole, $columnNames['model_morph_key'], 'model_type'],
                     'model_has_roles_role_model_type_primary');
             }
+            });
+        } else {
+            // Table exists - fix model_type column if needed
+            Schema::table($tableNames['model_has_roles'], function (Blueprint $table) {
+                $table->string('model_type', 191)->change();
             });
         }
 
